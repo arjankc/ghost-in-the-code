@@ -37,6 +37,7 @@ export type Puzzle = {
   explanation: string
   completionMessage: string
   preferredGhost?: GhostId
+  minLevel?: number
 }
 
 export type RuntimeStatus = {
@@ -50,10 +51,40 @@ export type RuntimeStatus = {
   error?: string
 }
 
+export type ChronicleEntry = {
+  id: string
+  at: number
+  text: string
+}
+
+export type PlayerStats = {
+  messagesSent: number
+  hintsUsed: number
+  wrongAnswers: number
+  perfectSolves: number
+  casesSolved: number
+  sessions: number
+}
+
 export type ProgressState = {
   selectedGhost: GhostId
   completedPuzzleIds: string[]
   bestScores: Record<string, number>
   preferredDifficulty: PuzzleDifficulty | 'any'
   conversationByGhost: Partial<Record<GhostId, TerminalMessage[]>>
+  unlockedAchievements: string[]
+  spokenGhostIds: GhostId[]
+  xp: number
+  level: number
+  combo: number
+  bestCombo: number
+  dailyStreak: number
+  lastPlayDate: string
+  ghostAffinity: Partial<Record<GhostId, number>>
+  unlockedRelics: string[]
+  equippedRelic: string | null
+  questProgress: Record<string, number>
+  completedQuests: string[]
+  stats: PlayerStats
+  chronicle: ChronicleEntry[]
 }

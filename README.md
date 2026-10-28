@@ -11,8 +11,12 @@ A local-first AI educational game for the Hacktoberfest Open-Source AI Challenge
 - Procedural Web Audio SFX + ambient hum (no audio files / CDNs)
 - Three characters: **COBOL**, **BASIC**, and **Assembly**
 - Local open-weight chat (no cloud AI fallback)
-- Five curated debugging mysteries with deterministic scoring
-- Progress and best scores in `localStorage`
+- Six curated debugging mysteries with deterministic scoring
+- Full local RPG layer: XP, levels, titles, combos, daily streaks
+- Ghost affinity meters, quest board, unlockable relic themes
+- Chronicle + stats, level-gated advanced cases, achievements
+- Typewriter replies, boot sequence, procedural audio, `?` help
+- All progress in `localStorage` (no accounts / cloud saves)
 - Clear setup / missing-runtime screens
 - Documented offline verification path
 

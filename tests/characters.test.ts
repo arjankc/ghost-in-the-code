@@ -24,8 +24,15 @@ describe('characters', () => {
 })
 
 describe('puzzles', () => {
-  it('ships at least three playable cases', () => {
-    expect(puzzles.length).toBeGreaterThanOrEqual(3)
+  it('ships at least five playable cases', () => {
+    expect(puzzles.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('covers beginner through advanced', () => {
+    const diffs = new Set(puzzles.map((p) => p.difficulty))
+    expect(diffs.has('beginner')).toBe(true)
+    expect(diffs.has('intermediate')).toBe(true)
+    expect(diffs.has('advanced')).toBe(true)
   })
 
   it('has deterministic answers and hints', () => {

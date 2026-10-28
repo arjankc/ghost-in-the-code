@@ -1,13 +1,38 @@
+import { levelFromXp } from '../game/progression'
 import type { GhostId, ProgressState, PuzzleDifficulty, TerminalMessage } from '../types'
 
 const STORAGE_KEY = 'ghost-in-the-code:progress:v1'
 
-const defaultProgress = (): ProgressState => ({
+const emptyStats = () => ({
+  messagesSent: 0,
+  hintsUsed: 0,
+  wrongAnswers: 0,
+  perfectSolves: 0,
+  casesSolved: 0,
+  sessions: 0,
+})
+
+export const defaultProgress = (): ProgressState => ({
   selectedGhost: 'cobol',
   completedPuzzleIds: [],
   bestScores: {},
   preferredDifficulty: 'any',
   conversationByGhost: {},
+  unlockedAchievements: [],
+  spokenGhostIds: ['cobol'],
+  xp: 0,
+  level: 1,
+  combo: 0,
+  bestCombo: 0,
+  dailyStreak: 0,
+  lastPlayDate: '',
+  ghostAffinity: { cobol: 0, basic: 0, assembly: 0 },
+  unlockedRelics: ['phosphor_core'],
+  equippedRelic: 'phosphor_core',
+  questProgress: {},
+  completedQuests: [],
+  stats: emptyStats(),
+  chronicle: [],
 })
 
 export function loadProgress(): ProgressState {
@@ -15,13 +40,34 @@ export function loadProgress(): ProgressState {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultProgress()
     const parsed = JSON.parse(raw) as Partial<ProgressState>
-    return {
+    const merged: ProgressState = {
       ...defaultProgress(),
       ...parsed,
       completedPuzzleIds: parsed.completedPuzzleIds ?? [],
       bestScores: parsed.bestScores ?? {},
       conversationByGhost: parsed.conversationByGhost ?? {},
+      unlockedAchievements: parsed.unlockedAchievements ?? [],
+      spokenGhostIds: parsed.spokenGhostIds?.length
+        ? parsed.spokenGhostIds
+        : ['cobol'],
+      ghostAffinity: {
+        cobol: 0,
+        basic: 0,
+        assembly: 0,
+        ...(parsed.ghostAffinity ?? {}),
+      },
+      unlockedRelics: parsed.unlockedRelics?.length
+        ? parsed.unlockedRelics
+        : ['phosphor_core'],
+      equippedRelic: parsed.equippedRelic ?? 'phosphor_core',
+      questProgress: parsed.questProgress ?? {},
+      completedQuests: parsed.completedQuests ?? [],
+      stats: { ...emptyStats(), ...(parsed.stats ?? {}) },
+      chronicle: parsed.chronicle ?? [],
     }
+    const { level } = levelFromXp(merged.xp)
+    merged.level = level
+    return merged
   } catch {
     return defaultProgress()
   }
@@ -53,23 +99,11 @@ export function setPreferredDifficulty(
   return state
 }
 
-export function recordPuzzleScore(puzzleId: string, score: number): ProgressState {
-  const state = loadProgress()
-  const prev = state.bestScores[puzzleId]
-  state.bestScores[puzzleId] = prev === undefined ? score : Math.max(prev, score)
-  if (!state.completedPuzzleIds.includes(puzzleId)) {
-    state.completedPuzzleIds.push(puzzleId)
-  }
-  saveProgress(state)
-  return state
-}
-
 export function saveConversation(
   ghostId: GhostId,
   messages: TerminalMessage[],
 ): ProgressState {
   const state = loadProgress()
-  // Keep last 40 messages per ghost to bound storage size
   state.conversationByGhost[ghostId] = messages.slice(-40)
   saveProgress(state)
   return state
@@ -78,6 +112,12 @@ export function saveConversation(
 export function clearConversation(ghostId: GhostId): ProgressState {
   const state = loadProgress()
   state.conversationByGhost[ghostId] = []
+  saveProgress(state)
+  return state
+}
+
+/** Persist a full game state after engine apply. */
+export function commitProgress(state: ProgressState): ProgressState {
   saveProgress(state)
   return state
 }

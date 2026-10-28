@@ -158,6 +158,41 @@ average = (a + b + c) / 2
     completionMessage:
       'The average settles at twenty. The flawed divisor dissolves into static.',
   },
+  {
+    id: 'shadowed-return',
+    title: 'The Shadowed Return',
+    difficulty: 'advanced',
+    category: 'algorithms',
+    preferredGhost: 'assembly',
+    minLevel: 3,
+    story:
+      'A recursive descent into a haunted stack should stop at depth 0, but the base case was written as a no-op comment. The machine never returns.',
+    code: `FUNCTION haunt(depth)
+  IF depth == 0 THEN
+    # TODO: return from the recursion
+  END
+  RETURN haunt(depth - 1) + 1
+END
+# Call: haunt(3) never finishes.`,
+    task: 'What should the base-case body do? Reply with a short phrase or line (example: return 0).',
+    acceptedAnswers: [
+      'return 0',
+      'return zero',
+      'return depth',
+      'return',
+      'base case should return 0',
+      'return 0 from the base case',
+    ],
+    hints: [
+      'Recursion needs an exit: when depth is 0, stop calling haunt again.',
+      'A common base case returns a concrete value such as 0.',
+      'Replace the TODO comment with `return 0` (or an equivalent return).',
+    ],
+    explanation:
+      'Without returning in the base case, the function falls through or keeps calling itself. `return 0` ends the chain.',
+    completionMessage:
+      'The stack unwinds. Depth zero finally yields a value.',
+  },
 ]
 
 export function getPuzzle(id: string): Puzzle | undefined {

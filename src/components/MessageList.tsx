@@ -2,14 +2,17 @@ import { useEffect, useRef } from 'react'
 import { getCharacter } from '../characters'
 import type { TerminalMessage } from '../types'
 import { GhostPortrait } from './GhostPortrait'
+import { TypewriterText } from './TypewriterText'
 
 type Props = {
   messages: TerminalMessage[]
   thinking: boolean
+  typewriter?: boolean
 }
 
-export function MessageList({ messages, thinking }: Props) {
+export function MessageList({ messages, thinking, typewriter = true }: Props) {
   const endRef = useRef<HTMLDivElement>(null)
+  const lastId = messages[messages.length - 1]?.id
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -25,6 +28,11 @@ export function MessageList({ messages, thinking }: Props) {
             : msg.role === 'assistant' && ghost
               ? ghost.displayName
               : 'Terminal'
+        const animate =
+          typewriter &&
+          msg.role === 'assistant' &&
+          msg.id === lastId &&
+          !thinking
 
         return (
           <article
@@ -54,7 +62,13 @@ export function MessageList({ messages, thinking }: Props) {
                 {msg.generated ? ' · generated fiction' : ''}
               </div>
             </div>
-            <div className="body">{msg.content}</div>
+            <div className="body">
+              {animate ? (
+                <TypewriterText text={msg.content} active cps={56} />
+              ) : (
+                msg.content
+              )}
+            </div>
           </article>
         )
       })}

@@ -205,4 +205,22 @@ export const sfx = {
   toggle() {
     tone(700, 0.05, 'triangle', 0.06)
   },
+  levelUp() {
+    ;[392, 523, 659, 784, 1047].forEach((f, i) =>
+      tone(f, 0.32, 'sine', 0.14, i * 0.09),
+    )
+    noiseBurst(0.15, 0.06, 1800)
+  },
+  quest() {
+    tone(587, 0.12, 'triangle', 0.1)
+    tone(740, 0.16, 'sine', 0.1, 0.08)
+    tone(880, 0.2, 'sine', 0.09, 0.16)
+  },
+  xp() {
+    tone(990, 0.05, 'sine', 0.06)
+  },
+  combo() {
+    tone(440, 0.06, 'square', 0.07)
+    tone(660, 0.08, 'square', 0.06, 0.04)
+  },
 }

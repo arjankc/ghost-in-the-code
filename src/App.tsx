@@ -1,15 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Ghost, Volume2, VolumeX, WifiOff, Wind } from 'lucide-react'
+import { CircleHelp, Ghost, Volume2, VolumeX, WifiOff, Wind } from 'lucide-react'
+import { achievements } from './achievements/catalog'
+import { AchievementsPanel } from './components/AchievementsPanel'
 import { BootSequence } from './components/BootSequence'
+import { Chronicle } from './components/Chronicle'
 import { FxLayer } from './components/FxLayer'
+import { GameHud } from './components/GameHud'
 import { GhostPortrait } from './components/GhostPortrait'
 import { GhostSelector } from './components/GhostSelector'
+import { HelpOverlay } from './components/HelpOverlay'
 import { InputLine } from './components/InputLine'
+import { LevelUpBurst } from './components/LevelUpBurst'
 import { MessageList } from './components/MessageList'
 import { MysteryPanel } from './components/MysteryPanel'
+import { QuestBoard } from './components/QuestBoard'
+import { RelicShelf } from './components/RelicShelf'
 import { ScoreBurst } from './components/ScoreBurst'
 import { SetupScreen } from './components/SetupScreen'
 import { getCharacter } from './characters'
+import { applyGameEvent } from './game/engine'
+import { questById } from './game/quests'
+import { relicById } from './game/relics'
+import { puzzleIntro } from './puzzles/intros'
+import { puzzles } from './puzzles/puzzles'
 import { ApiError, fetchStatus, runTestPrompt, sendChat } from './services/api'
 import {
   setAmbientEnabled,
@@ -20,17 +33,18 @@ import {
 import { loadSettings, saveSettings, type AppSettings } from './services/settings'
 import {
   clearConversation,
+  commitProgress,
   loadProgress,
-  recordPuzzleScore,
   resetProgress,
   saveConversation,
-  setSelectedGhost,
+  setPreferredDifficulty,
 } from './services/storage'
 import './styles/terminal.css'
 import type {
   GhostId,
   ProgressState,
   Puzzle,
+  PuzzleDifficulty,
   RuntimeStatus,
   TerminalMessage,
 } from './types'
@@ -49,7 +63,7 @@ function greetingFor(ghostId: GhostId): TerminalMessage[] {
   const ghost = getCharacter(ghostId)
   return [
     note(
-      `${config.appName} v${config.version} — local inference only. Characters are fictional.`,
+      `${config.appName} v${config.version} — local RPG mode. Earn XP, relics, and quests offline. Press ? for help.`,
     ),
     {
       id: createId(),
@@ -71,8 +85,12 @@ export default function App() {
   const [entered, setEntered] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [glitch, setGlitch] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
   const [errorFlash, setErrorFlash] = useState<string | null>(null)
+  const [achievementToasts, setAchievementToasts] = useState<string[]>([])
+  const [xpFlash, setXpFlash] = useState(0)
+  const [levelUp, setLevelUp] = useState<number | null>(null)
   const [scoreBurst, setScoreBurst] = useState<{
     score: number
     title: string
@@ -80,6 +98,7 @@ export default function App() {
 
   const ghostId = progress.selectedGhost
   const ghost = useMemo(() => getCharacter(ghostId), [ghostId])
+  const relic = relicById(progress.equippedRelic)
 
   const [messages, setMessages] = useState<TerminalMessage[]>(() => {
     const stored =
@@ -88,10 +107,39 @@ export default function App() {
     return greetingFor(loadProgress().selectedGhost)
   })
 
+  const runEvent = useCallback((event: Parameters<typeof applyGameEvent>[1]) => {
+    // Always read latest persisted state to avoid stale React closures.
+    const delta = applyGameEvent(loadProgress(), event)
+    commitProgress(delta.state)
+    setProgress(delta.state)
+    if (delta.xpGained > 0) {
+      setXpFlash(delta.xpGained)
+      sfx.xp()
+      window.setTimeout(() => setXpFlash(0), 1200)
+    }
+    if (delta.leveledUpTo) {
+      sfx.levelUp()
+      setLevelUp(delta.leveledUpTo)
+    }
+    if (delta.newQuests.length) sfx.quest()
+    if (delta.newAchievements.length) {
+      setAchievementToasts(delta.newAchievements)
+    }
+    return delta
+  }, [])
+
   useEffect(() => {
     setMuted(settings.soundMuted)
     setAmbientEnabled(settings.ambientOn)
   }, [settings.soundMuted, settings.ambientOn])
+
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--phosphor', relic.theme.phosphor)
+    root.style.setProperty('--amber', relic.theme.amber)
+    root.style.setProperty('--violet', relic.theme.violet)
+    root.style.setProperty('--glow', relic.theme.glow)
+  }, [relic])
 
   useEffect(() => {
     function unlock() {
@@ -101,15 +149,25 @@ export default function App() {
     return () => window.removeEventListener('pointerdown', unlock)
   }, [])
 
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== '?' && e.key !== '/') return
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return
+      e.preventDefault()
+      setHelpOpen((v) => !v)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const refreshStatus = useCallback(async () => {
     setStatusLoading(true)
     setErrorFlash(null)
     try {
       const next = await fetchStatus()
       setStatus(next)
-      if (next.runtimeAvailable && next.modelInstalled) {
-        setEntered(true)
-      }
+      if (next.runtimeAvailable && next.modelInstalled) setEntered(true)
     } catch (err) {
       setStatus({
         runtimeAvailable: false,
@@ -151,10 +209,27 @@ export default function App() {
     sfx.summon()
     setGlitch(true)
     window.setTimeout(() => setGlitch(false), 450)
-    const next = setSelectedGhost(id)
-    setProgress(next)
-    const stored = next.conversationByGhost[id]
+    const delta = runEvent({ type: 'ghost_summoned', ghostId: id })
+    const stored = delta.state.conversationByGhost[id]
     setMessages(stored && stored.length > 0 ? stored : greetingFor(id))
+  }
+
+  function handleBeginCase(puzzle: Puzzle) {
+    const intro = puzzleIntro(puzzle, ghostId)
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: createId(),
+        role: 'assistant',
+        ghostId: intro.ghostId,
+        content: intro.text,
+        generated: false,
+        timestamp: Date.now(),
+      },
+      note(
+        `Case opened: ${puzzle.title} (${puzzle.difficulty}). Combo at risk if you fail.`,
+      ),
+    ])
   }
 
   async function handleSend(text: string) {
@@ -162,6 +237,7 @@ export default function App() {
     await unlockAudio()
     setThinking(true)
     setErrorFlash(null)
+    runEvent({ type: 'message', ghostId })
 
     const userMsg: TerminalMessage = {
       id: createId(),
@@ -208,6 +284,7 @@ export default function App() {
   }
 
   async function handleHint(puzzle: Puzzle, hintsUsed: number) {
+    runEvent({ type: 'hint_used' })
     if (thinking) return
     setThinking(true)
     const prompt = `I am on puzzle "${puzzle.title}". I have used ${hintsUsed} curated hint(s). Give a short in-character nudge that does not spoil the exact accepted answer.`
@@ -250,14 +327,46 @@ export default function App() {
     }
   }
 
-  function handleSolved(puzzleId: string, score: number, title: string) {
-    const next = recordPuzzleScore(puzzleId, score)
-    setProgress(next)
-    setScoreBurst({ score, title })
-    setMessages((prev) => [
-      ...prev,
-      note(`Case closed: ${puzzleId} — score ${score}. Best saved locally.`),
-    ])
+  function handleSolved(puzzle: Puzzle, score: number, _hints: number) {
+    const delta = runEvent({
+      type: 'puzzle_solved',
+      puzzleId: puzzle.id,
+      score,
+      difficulty: puzzle.difficulty,
+      preferredGhost: puzzle.preferredGhost,
+    })
+    setScoreBurst({ score, title: puzzle.title })
+    const lines = [
+      note(
+        `Case closed: ${puzzle.title} — ${score} pts · combo ×${delta.state.combo} · +${delta.xpGained} XP`,
+      ),
+    ]
+    for (const id of delta.newAchievements) {
+      const a = achievements.find((x) => x.id === id)
+      if (a) lines.push(note(`Achievement: ${a.title}`))
+    }
+    for (const id of delta.newQuests) {
+      const q = questById(id)
+      if (q) lines.push(note(`Quest complete: ${q.title}`))
+    }
+    for (const id of delta.newRelics) {
+      lines.push(note(`Relic unlocked: ${relicById(id).name}`))
+    }
+    setMessages((prev) => [...prev, ...lines])
+  }
+
+  function handleFail() {
+    runEvent({ type: 'puzzle_fail' })
+    setGlitch(true)
+    window.setTimeout(() => setGlitch(false), 350)
+  }
+
+  function handleDifficulty(d: PuzzleDifficulty | 'any') {
+    setProgress(setPreferredDifficulty(d))
+  }
+
+  function handleEquip(relicId: string) {
+    runEvent({ type: 'equip_relic', relicId })
   }
 
   async function handleTest() {
@@ -282,12 +391,14 @@ export default function App() {
 
   function handleResetProgress() {
     const confirmed = window.confirm(
-      'Reset all local progress, best scores, and saved conversations?',
+      'Reset ALL game progress — XP, quests, relics, scores, and chats?',
     )
     if (!confirmed) return
     sfx.wrong()
     const next = resetProgress()
     setProgress(next)
+    setAchievementToasts([])
+    setLevelUp(null)
     setMessages(greetingFor(next.selectedGhost))
   }
 
@@ -300,7 +411,15 @@ export default function App() {
         <div className="crt-frame">
           <BootSequence
             reducedMotion={settings.reducedMotion}
-            onDone={() => setBooted(true)}
+            onDone={() => {
+              setBooted(true)
+              const delta = applyGameEvent(loadProgress(), {
+                type: 'session_start',
+              })
+              commitProgress(delta.state)
+              setProgress(delta.state)
+              if (delta.xpGained) setXpFlash(delta.xpGained)
+            }}
           />
         </div>
       </div>
@@ -345,9 +464,16 @@ export default function App() {
               </>
             )}
           </span>
-          <span className="badge">v{config.version}</span>
-          <span className="badge warn">MODEL {status?.modelName ?? '…'}</span>
+          <span className="badge warn">{relic.name}</span>
           <div className="audio-controls">
+            <button
+              type="button"
+              className="btn icon-btn"
+              title="Help (?)"
+              onClick={() => setHelpOpen(true)}
+            >
+              <CircleHelp size={14} />
+            </button>
             <button
               type="button"
               className="btn icon-btn"
@@ -389,18 +515,26 @@ export default function App() {
         ) : (
           <div className="main-grid">
             <section className="terminal-pane">
+              <GameHud progress={progress} xpFlash={xpFlash} />
               <div className="status-bar">
                 <span className="badge ok">GHOST: {ghost.displayName}</span>
                 <span className="badge">
-                  CASES SOLVED: {progress.completedPuzzleIds.length}/5
+                  CASES: {progress.completedPuzzleIds.length}/{puzzles.length}
+                </span>
+                <span className="badge warn">
+                  QUESTS {progress.completedQuests.length}/8
                 </span>
                 {errorFlash ? (
                   <span className="badge err">{errorFlash}</span>
                 ) : (
-                  <span className="badge warn">NO CLOUD FALLBACK</span>
+                  <span className="badge">NO CLOUD FALLBACK</span>
                 )}
               </div>
-              <MessageList messages={messages} thinking={thinking} />
+              <MessageList
+                messages={messages}
+                thinking={thinking}
+                typewriter={!settings.reducedMotion}
+              />
               <InputLine
                 disabled={thinking || !ready}
                 onSend={(t) => void handleSend(t)}
@@ -421,20 +555,31 @@ export default function App() {
             <aside className="side-pane">
               <GhostSelector
                 selected={ghostId}
+                progress={progress}
                 onSelect={selectGhost}
                 disabled={thinking}
               />
               <MysteryPanel
                 progress={progress}
                 busy={thinking}
+                onDifficultyChange={handleDifficulty}
+                onBeginCase={handleBeginCase}
                 onAskHint={(p, n) => void handleHint(p, n)}
+                onFail={handleFail}
                 onSolved={handleSolved}
               />
+              <QuestBoard progress={progress} />
+              <RelicShelf progress={progress} onEquip={handleEquip} />
+              <AchievementsPanel
+                progress={progress}
+                toastIds={achievementToasts}
+              />
+              <Chronicle progress={progress} />
               <div className="side-section">
                 <h2>Local Data</h2>
                 <p className="disclaimer">
-                  Progress, settings, and chat stay in localStorage. Sounds are
-                  synthesised in-browser (no audio downloads).
+                  Full RPG progress stays in localStorage. No accounts, no
+                  cloud saves.
                 </p>
                 <div className="setup-actions">
                   <button
@@ -473,8 +618,7 @@ export default function App() {
 
         <footer className="footer-bar">
           <span className="disclaimer">
-            Open-weight local inference via Ollama · MIT app code · procedural
-            audio
+            Local-first AI RPG · Ollama inference · procedural audio · ? help
           </span>
           <button
             type="button"
@@ -488,8 +632,13 @@ export default function App() {
         <ScoreBurst
           score={scoreBurst?.score ?? null}
           title={scoreBurst?.title}
-          onDismiss={() => setScoreBurst(null)}
+          onDismiss={() => {
+            setScoreBurst(null)
+            setAchievementToasts([])
+          }}
         />
+        <LevelUpBurst level={levelUp} onDismiss={() => setLevelUp(null)} />
+        <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
       </div>
     </div>
   )
