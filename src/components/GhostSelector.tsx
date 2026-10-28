@@ -1,5 +1,6 @@
 import { characters } from '../characters'
 import type { GhostId } from '../types'
+import { GhostPortrait } from './GhostPortrait'
 
 type Props = {
   selected: GhostId
@@ -20,8 +21,18 @@ export function GhostSelector({ selected, onSelect, disabled }: Props) {
           disabled={disabled}
           onClick={() => onSelect(ghost.id)}
         >
-          <div className="name">{ghost.displayName}</div>
-          <div className="desc">{ghost.shortDescription}</div>
+          <div className="ghost-card__row">
+            <GhostPortrait
+              id={ghost.id}
+              accent={ghost.accent}
+              size={52}
+              animate={selected === ghost.id}
+            />
+            <div>
+              <div className="name">{ghost.displayName}</div>
+              <div className="desc">{ghost.shortDescription}</div>
+            </div>
+          </div>
         </button>
       ))}
       <p className="disclaimer">

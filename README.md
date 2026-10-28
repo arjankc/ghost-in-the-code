@@ -7,6 +7,8 @@ A local-first AI educational game for the Hacktoberfest Open-Source AI Challenge
 ## Features
 
 - Phosphor-green haunted terminal UI (CRT-inspired, local assets only)
+- Boot sequence, floating ghost portraits, particle FX, and score bursts
+- Procedural Web Audio SFX + ambient hum (no audio files / CDNs)
 - Three characters: **COBOL**, **BASIC**, and **Assembly**
 - Local open-weight chat (no cloud AI fallback)
 - Five curated debugging mysteries with deterministic scoring

@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Ghost, WifiOff } from 'lucide-react'
+import { Ghost, Volume2, VolumeX, WifiOff, Wind } from 'lucide-react'
+import { BootSequence } from './components/BootSequence'
+import { FxLayer } from './components/FxLayer'
+import { GhostPortrait } from './components/GhostPortrait'
 import { GhostSelector } from './components/GhostSelector'
 import { InputLine } from './components/InputLine'
 import { MessageList } from './components/MessageList'
 import { MysteryPanel } from './components/MysteryPanel'
+import { ScoreBurst } from './components/ScoreBurst'
 import { SetupScreen } from './components/SetupScreen'
 import { getCharacter } from './characters'
 import { ApiError, fetchStatus, runTestPrompt, sendChat } from './services/api'
+import {
+  setAmbientEnabled,
+  setMuted,
+  sfx,
+  unlockAudio,
+} from './services/audio'
+import { loadSettings, saveSettings, type AppSettings } from './services/settings'
 import {
   clearConversation,
   loadProgress,
@@ -16,7 +27,13 @@ import {
   setSelectedGhost,
 } from './services/storage'
 import './styles/terminal.css'
-import type { GhostId, ProgressState, Puzzle, RuntimeStatus, TerminalMessage } from './types'
+import type {
+  GhostId,
+  ProgressState,
+  Puzzle,
+  RuntimeStatus,
+  TerminalMessage,
+} from './types'
 import { config, createId } from './utils/clientConfig'
 
 function note(content: string): TerminalMessage {
@@ -47,21 +64,42 @@ function greetingFor(ghostId: GhostId): TerminalMessage[] {
 
 export default function App() {
   const [progress, setProgress] = useState<ProgressState>(() => loadProgress())
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings())
+  const [booted, setBooted] = useState(false)
   const [status, setStatus] = useState<RuntimeStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [entered, setEntered] = useState(false)
   const [thinking, setThinking] = useState(false)
+  const [glitch, setGlitch] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
   const [errorFlash, setErrorFlash] = useState<string | null>(null)
+  const [scoreBurst, setScoreBurst] = useState<{
+    score: number
+    title: string
+  } | null>(null)
 
   const ghostId = progress.selectedGhost
   const ghost = useMemo(() => getCharacter(ghostId), [ghostId])
 
   const [messages, setMessages] = useState<TerminalMessage[]>(() => {
-    const stored = loadProgress().conversationByGhost[loadProgress().selectedGhost]
+    const stored =
+      loadProgress().conversationByGhost[loadProgress().selectedGhost]
     if (stored && stored.length > 0) return stored
     return greetingFor(loadProgress().selectedGhost)
   })
+
+  useEffect(() => {
+    setMuted(settings.soundMuted)
+    setAmbientEnabled(settings.ambientOn)
+  }, [settings.soundMuted, settings.ambientOn])
+
+  useEffect(() => {
+    function unlock() {
+      void unlockAudio()
+    }
+    window.addEventListener('pointerdown', unlock, { once: true })
+    return () => window.removeEventListener('pointerdown', unlock)
+  }, [])
 
   const refreshStatus = useCallback(async () => {
     setStatusLoading(true)
@@ -93,8 +131,26 @@ export default function App() {
     saveConversation(ghostId, messages)
   }, [ghostId, messages])
 
+  useEffect(() => {
+    if (!thinking) return
+    sfx.think()
+    const id = window.setInterval(() => sfx.think(), 1600)
+    return () => window.clearInterval(id)
+  }, [thinking])
+
+  function patchSettings(partial: Partial<AppSettings>) {
+    setSettings((prev) => {
+      const next = { ...prev, ...partial }
+      saveSettings(next)
+      return next
+    })
+  }
+
   function selectGhost(id: GhostId) {
     if (id === ghostId) return
+    sfx.summon()
+    setGlitch(true)
+    window.setTimeout(() => setGlitch(false), 450)
     const next = setSelectedGhost(id)
     setProgress(next)
     const stored = next.conversationByGhost[id]
@@ -103,6 +159,7 @@ export default function App() {
 
   async function handleSend(text: string) {
     if (thinking) return
+    await unlockAudio()
     setThinking(true)
     setErrorFlash(null)
 
@@ -112,8 +169,7 @@ export default function App() {
       content: text,
       timestamp: Date.now(),
     }
-    const history = [...messages, userMsg]
-    setMessages(history)
+    setMessages([...messages, userMsg])
 
     try {
       const reply = await sendChat({
@@ -121,6 +177,7 @@ export default function App() {
         history: messages,
         userMessage: text,
       })
+      sfx.reply()
       setMessages((prev) => [
         ...prev,
         {
@@ -134,6 +191,9 @@ export default function App() {
         note(reply.disclaimer),
       ])
     } catch (err) {
+      sfx.error()
+      setGlitch(true)
+      window.setTimeout(() => setGlitch(false), 500)
       const message =
         err instanceof ApiError
           ? err.message
@@ -141,10 +201,7 @@ export default function App() {
             ? err.message
             : 'Request failed'
       setErrorFlash(message)
-      setMessages((prev) => [
-        ...prev,
-        note(`Signal lost: ${message}`),
-      ])
+      setMessages((prev) => [...prev, note(`Signal lost: ${message}`)])
     } finally {
       setThinking(false)
     }
@@ -163,6 +220,7 @@ export default function App() {
         mode: 'hint',
         puzzleContext: context,
       })
+      sfx.reply()
       setMessages((prev) => [
         ...prev,
         {
@@ -181,16 +239,21 @@ export default function App() {
         },
       ])
     } catch (err) {
+      sfx.error()
       const message = err instanceof Error ? err.message : 'Hint request failed'
-      setMessages((prev) => [...prev, note(`Hint spirit unavailable: ${message}`)])
+      setMessages((prev) => [
+        ...prev,
+        note(`Hint spirit unavailable: ${message}`),
+      ])
     } finally {
       setThinking(false)
     }
   }
 
-  function handleSolved(puzzleId: string, score: number) {
+  function handleSolved(puzzleId: string, score: number, title: string) {
     const next = recordPuzzleScore(puzzleId, score)
     setProgress(next)
+    setScoreBurst({ score, title })
     setMessages((prev) => [
       ...prev,
       note(`Case closed: ${puzzleId} — score ${score}. Best saved locally.`),
@@ -200,6 +263,8 @@ export default function App() {
   async function handleTest() {
     setTestResult('Running test prompt…')
     const result = await runTestPrompt()
+    if (result.ok) sfx.reply()
+    else sfx.error()
     setTestResult(
       result.ok
         ? `Test OK: ${result.reply}`
@@ -209,6 +274,7 @@ export default function App() {
   }
 
   function handleClearConversation() {
+    sfx.click()
     const next = clearConversation(ghostId)
     setProgress(next)
     setMessages(greetingFor(ghostId))
@@ -219,21 +285,53 @@ export default function App() {
       'Reset all local progress, best scores, and saved conversations?',
     )
     if (!confirmed) return
+    sfx.wrong()
     const next = resetProgress()
     setProgress(next)
     setMessages(greetingFor(next.selectedGhost))
   }
 
   const ready = Boolean(status?.runtimeAvailable && status?.modelInstalled)
-  const showSetup = !entered || !ready
+  const showSetup = booted && (!entered || !ready)
+
+  if (!booted) {
+    return (
+      <div className="app-shell">
+        <div className="crt-frame">
+          <BootSequence
+            reducedMotion={settings.reducedMotion}
+            onDone={() => setBooted(true)}
+          />
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${settings.reducedMotion ? 'reduce-motion' : ''}`}
+      style={{ ['--ghost-accent' as string]: ghost.accent }}
+    >
       <div className="crt-frame">
+        <FxLayer
+          accent={ghost.accent}
+          thinking={thinking}
+          glitch={glitch}
+          reducedMotion={settings.reducedMotion}
+        />
+
         <header className="header-bar">
           <div className="brand">
             <h1>{config.appName}</h1>
             <p className="tagline">{config.tagline}</p>
+          </div>
+          <div className="header-ghost" aria-hidden>
+            <GhostPortrait
+              id={ghost.id}
+              accent={ghost.accent}
+              size={48}
+              animate
+            />
           </div>
           <span className={`badge ${ready ? 'ok' : 'err'}`}>
             <span className="pulse" aria-hidden />
@@ -248,22 +346,37 @@ export default function App() {
             )}
           </span>
           <span className="badge">v{config.version}</span>
-          <span className="badge warn">
-            MODEL {status?.modelName ?? '…'}
-          </span>
+          <span className="badge warn">MODEL {status?.modelName ?? '…'}</span>
+          <div className="audio-controls">
+            <button
+              type="button"
+              className="btn icon-btn"
+              title={settings.soundMuted ? 'Unmute' : 'Mute'}
+              aria-pressed={settings.soundMuted}
+              onClick={() => {
+                sfx.toggle()
+                patchSettings({ soundMuted: !settings.soundMuted })
+              }}
+            >
+              {settings.soundMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            </button>
+            <button
+              type="button"
+              className="btn icon-btn"
+              title={settings.ambientOn ? 'Ambient on' : 'Ambient off'}
+              aria-pressed={settings.ambientOn}
+              onClick={() => {
+                sfx.toggle()
+                patchSettings({ ambientOn: !settings.ambientOn })
+              }}
+            >
+              <Wind size={14} />
+            </button>
+          </div>
         </header>
 
         {showSetup && !entered ? (
-          <div
-            style={{
-              position: 'relative',
-              zIndex: 2,
-              display: 'grid',
-              placeItems: 'center',
-              padding: '1rem',
-              overflow: 'auto',
-            }}
-          >
+          <div className="setup-wrap">
             <SetupScreen
               status={status}
               loading={statusLoading}
@@ -277,11 +390,9 @@ export default function App() {
           <div className="main-grid">
             <section className="terminal-pane">
               <div className="status-bar">
-                <span className="badge ok">
-                  GHOST: {ghost.displayName}
-                </span>
+                <span className="badge ok">GHOST: {ghost.displayName}</span>
                 <span className="badge">
-                  CASES SOLVED: {progress.completedPuzzleIds.length}/{5}
+                  CASES SOLVED: {progress.completedPuzzleIds.length}/5
                 </span>
                 {errorFlash ? (
                   <span className="badge err">{errorFlash}</span>
@@ -290,7 +401,10 @@ export default function App() {
                 )}
               </div>
               <MessageList messages={messages} thinking={thinking} />
-              <InputLine disabled={thinking || !ready} onSend={(t) => void handleSend(t)} />
+              <InputLine
+                disabled={thinking || !ready}
+                onSend={(t) => void handleSend(t)}
+              />
               {!ready ? (
                 <div style={{ padding: '0 0.9rem 0.75rem' }}>
                   <SetupScreen
@@ -319,9 +433,8 @@ export default function App() {
               <div className="side-section">
                 <h2>Local Data</h2>
                 <p className="disclaimer">
-                  Progress, settings, and optional chat history stay in this
-                  browser&apos;s localStorage. Nothing is sent to analytics
-                  services.
+                  Progress, settings, and chat stay in localStorage. Sounds are
+                  synthesised in-browser (no audio downloads).
                 </p>
                 <div className="setup-actions">
                   <button
@@ -360,13 +473,23 @@ export default function App() {
 
         <footer className="footer-bar">
           <span className="disclaimer">
-            Open-weight local inference via Ollama · MIT-licensed app code ·
-            model licenses are separate
+            Open-weight local inference via Ollama · MIT app code · procedural
+            audio
           </span>
-          <button type="button" className="btn" onClick={() => void refreshStatus()}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void refreshStatus()}
+          >
             REFRESH STATUS
           </button>
         </footer>
+
+        <ScoreBurst
+          score={scoreBurst?.score ?? null}
+          title={scoreBurst?.title}
+          onDismiss={() => setScoreBurst(null)}
+        />
       </div>
     </div>
   )

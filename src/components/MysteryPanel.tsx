@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react'
 import { puzzles } from '../puzzles/puzzles'
 import { scoreForHints } from '../puzzles/scoring'
 import { isCorrectAnswer } from '../puzzles/validate'
+import { sfx } from '../services/audio'
 import type { ProgressState, Puzzle } from '../types'
 
 type Props = {
   progress: ProgressState
   busy: boolean
   onAskHint: (puzzle: Puzzle, hintsUsed: number) => void
-  onSolved: (puzzleId: string, score: number) => void
+  onSolved: (puzzleId: string, score: number, title: string) => void
 }
 
 export function MysteryPanel({ progress, busy, onAskHint, onSolved }: Props) {
@@ -23,6 +24,7 @@ export function MysteryPanel({ progress, busy, onAskHint, onSolved }: Props) {
   )
 
   function begin(puzzle: Puzzle) {
+    sfx.click()
     setActiveId(puzzle.id)
     setAttempt('')
     setHintsUsed(0)
@@ -33,15 +35,18 @@ export function MysteryPanel({ progress, busy, onAskHint, onSolved }: Props) {
     if (!active) return
     if (isCorrectAnswer(attempt, active.acceptedAnswers)) {
       const score = scoreForHints(hintsUsed)
+      sfx.correct()
       setFeedback(`${active.completionMessage} Score: ${score}. ${active.explanation}`)
-      onSolved(active.id, score)
+      onSolved(active.id, score, active.title)
     } else {
+      sfx.wrong()
       setFeedback('Incorrect. The bug still lurks — try again or request a hint.')
     }
   }
 
   function hint() {
     if (!active) return
+    sfx.hint()
     const next = Math.min(hintsUsed + 1, active.hints.length)
     setHintsUsed(next)
     const canned = active.hints[next - 1]
@@ -60,27 +65,39 @@ export function MysteryPanel({ progress, busy, onAskHint, onSolved }: Props) {
       {!active ? (
         puzzles.map((puzzle) => {
           const best = progress.bestScores[puzzle.id]
+          const done = progress.completedPuzzleIds.includes(puzzle.id)
           return (
             <button
               key={puzzle.id}
               type="button"
-              className="ghost-card"
+              className={`ghost-card puzzle-pick ${done ? 'puzzle-pick--done' : ''}`}
               onClick={() => begin(puzzle)}
             >
-              <div className="name">{puzzle.title}</div>
-              <div className="desc">
-                {puzzle.difficulty} · {puzzle.category}
-                {best !== undefined ? ` · best ${best}` : ''}
+              <div className="puzzle-pick__icon" aria-hidden>
+                {done ? '✓' : '◈'}
+              </div>
+              <div>
+                <div className="name">{puzzle.title}</div>
+                <div className="desc">
+                  {puzzle.difficulty} · {puzzle.category}
+                  {best !== undefined ? ` · best ${best}` : ''}
+                </div>
               </div>
             </button>
           )
         })
       ) : (
-        <div className="puzzle-card">
+        <div className="puzzle-card puzzle-card--active">
           <h3>{active.title}</h3>
           <div className="puzzle-meta">
             {active.difficulty} · hints used {hintsUsed} · potential{' '}
             {scoreForHints(hintsUsed)} pts
+          </div>
+          <div className="hp-bar" aria-hidden>
+            <div
+              className="hp-bar__fill"
+              style={{ width: `${Math.max(25, 100 - hintsUsed * 25)}%` }}
+            />
           </div>
           <p className="disclaimer">{active.story}</p>
           <pre className="code-block">{active.code}</pre>
@@ -91,13 +108,7 @@ export function MysteryPanel({ progress, busy, onAskHint, onSolved }: Props) {
             rows={2}
             placeholder="Your answer…"
             aria-label="Puzzle answer"
-            style={{
-              width: '100%',
-              background: 'rgba(0,0,0,0.35)',
-              border: '1px solid rgba(125,255,154,0.25)',
-              padding: '0.45rem',
-              color: 'var(--phosphor)',
-            }}
+            className="puzzle-answer"
           />
           <div className="setup-actions">
             <button
@@ -120,6 +131,7 @@ export function MysteryPanel({ progress, busy, onAskHint, onSolved }: Props) {
               type="button"
               className="btn"
               onClick={() => {
+                sfx.click()
                 setActiveId(null)
                 setFeedback(null)
               }}
@@ -127,7 +139,13 @@ export function MysteryPanel({ progress, busy, onAskHint, onSolved }: Props) {
               BACK
             </button>
           </div>
-          {feedback ? <p className="disclaimer">{feedback}</p> : null}
+          {feedback ? (
+            <p
+              className={`feedback-line ${feedback.startsWith('Incorrect') ? 'feedback-line--bad' : 'feedback-line--good'}`}
+            >
+              {feedback}
+            </p>
+          ) : null}
         </div>
       )}
     </div>
